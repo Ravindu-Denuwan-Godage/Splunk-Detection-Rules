@@ -1,0 +1,27 @@
+# Splunk detection rule to catch LSASS memory dumping with ProcDump.
+# Detection Focus: ProcDump execution targeting LSASS (-ma lsass.exe) — a common credential dumping technique.
+# Logic: Alerts when ProcDump is executed with LSASS targeting and memory dump flags, providing a high-confidence signal of credential theft attempts.
+
+index=endpoint sourcetype="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" "*ProcDump*" earliest=-24h
+| rex field=_raw "<EventID>(?<EventID>[^<]+)"
+| rex field=_raw "<Data Name='Image'>(?<Image>[^<]+)"
+| rex field=_raw "<Data Name='CommandLine'>(?<CommandLine>[^<]+)"
+| rex field=_raw "<Data Name='User'>(?<User>[^<]+)"
+| rex field=_raw "<Data Name='ParentImage'>(?<ParentImage>[^<]+)"
+| rex field=_raw "<Data Name='ProcessId'>(?<ProcessId>[^<]+)"
+| rex field=_raw "<Data Name='IntegrityLevel'>(?<IntegrityLevel>[^<]+)"
+| rex field=_raw "<Computer>(?<Computer>[^<]+)"
+| where EventID="1"
+| search CommandLine="*lsass*" AND CommandLine="*-ma*"
+| eval Alert_Title="LSASS Memory Dump Detected - ProcDump"
+| eval Severity="High"
+| eval MITRE_Tactic="TA0006 - Credential Access"
+| eval MITRE_Sub_Technique="T1003.001 - LSASS Memory"
+| eval Description="ProcDump used to dump LSASS memory for credential extraction"
+| eval Suspicious_Parent= if(match(ParentImage, "(?i)(cmd\.exe|powershell\.exe|wscript\.exe|rundll32\.exe)"), "Yes", "No")
+| eval Risk_Score = case(
+    IntegrityLevel="High" AND match(User, "(?i)admin"), 90,
+    IntegrityLevel="High", 80,
+    1=1, 70)
+
+| table _time, Alert_Title, Severity, MITRE_Tactic, MITRE_Sub_Technique, Computer, User, Image, CommandLine, ParentImage, ProcessId, IntegrityLevel, Description, Suspicious_Parent, Risk_Score
