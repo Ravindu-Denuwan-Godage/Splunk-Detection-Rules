@@ -1,0 +1,75 @@
+index=endpoint sourcetype="XmlWinEventLog:Microsoft-Windows-Sysmon/Operational" earliest=-4h
+| search "copy-item" AND ("C$" OR "ADMIN$" OR "IPC$" OR "D$" OR "E$") AND "powershell" AND "<EventID>1</EventID>"
+| rex field=_raw "<Data Name='Image'>(?<Image>[^<]+)"
+| rex field=_raw "<Data Name='CommandLine'>(?<CommandLine>[^<]+)"
+| rex field=_raw "<Data Name='User'>(?<User>[^<]+)"
+| rex field=_raw "<Data Name='Computer'>(?<Computer>[^<]+)"
+| rex field=_raw "<Data Name='IntegrityLevel'>(?<IntegrityLevel>[^<]+)"
+| where match(CommandLine, "(?i).*copy-item.*") AND match(CommandLine, "(?i).*\\$.*")
+| where match(Image, "(?i).*powershell.*")
+| eval is_service_account = case(
+    match(User, "(?i).*svc.*"), "yes",
+    match(User, "(?i).*service.*"), "yes",
+    match(User, "(?i)system"), "yes",
+    match(User, "(?i).*backup.*"), "yes",
+    match(User, "(?i).*deploy.*"), "yes",
+    match(User, "(?i)NT AUTHORITY"), "yes",
+    1==1, "no"
+)
+| where is_service_account="no"
+| head 1000
+| sort -_time
+| eval alert_description = "PowerShell Copy-Item accessing administrative shares detected"
+| table _time, Image, CommandLine, User, Computer, IntegrityLevel, alert_description
+
+
+
+#==============================================================================
+# Splunk Detection Rule: PowerShell Administrative Share Access (T1039)
+#==============================================================================
+#
+# DESCRIPTION:
+# This detection rule identifies attackers using PowerShell Copy-Item commands 
+# to access administrative shares (C$, ADMIN$, IPC$, etc.) for data exfiltration
+# and lateral movement. This technique is commonly observed in APT campaigns
+# and ransomware attacks.
+#
+# MITRE ATT&CK TECHNIQUE:
+# T1039 - Data from Network Shared Drive
+#
+# DATA SOURCE:
+# - Windows Sysmon Event ID 1 (Process Creation)
+# - Requires Sysmon deployment on endpoints
+#
+# DETECTION LOGIC:
+# 1. Identifies PowerShell execution with Copy-Item cmdlet
+# 2. Filters for administrative share access patterns (.*\$)
+# 3. Excludes known service accounts to reduce false positives
+# 4. Optimized for enterprise-scale performance
+#
+# ENTERPRISE FEATURES:
+# - Service account filtering (svc-*, *service*, system accounts)
+# - Performance optimized with early filtering
+# - 4-hour time window for frequent execution
+# - Result limiting (1000 events) to prevent resource exhaustion
+# - SOC-analyst friendly output format
+#
+# FALSE POSITIVES:
+# - Legitimate administrative activities during business hours
+# - Backup software accessing administrative shares
+# - IT automation tools using PowerShell for deployment
+#
+# TUNING RECOMMENDATIONS:
+# 1. Add organization-specific service account patterns
+# 2. Consider time-based filtering for after-hours alerts
+# 3. Whitelist known administrative workstations
+# 4. Adjust time window based on environment needs
+#
+# THREAT INTEL CONTEXT:
+# This technique was observed in major breaches including SolarWinds (2020)
+# where threat actors used administrative shares for lateral movement and
+# data collection across compromised networks.
+#
+# ALERT SEVERITY: Medium-High
+# RECOMMENDED ACTION: Investigate user context, accessed files, and timeline
+#==============================================================================
